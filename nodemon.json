@@ -4,3 +4,4 @@
   "exec": "tsx src/server.ts",
   "env": { "NODE_ENV": "development" }
 }
+
