@@ -14,7 +14,7 @@ import os
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from database import get_db
+from database import _open_db as get_db
 
 logger = logging.getLogger(__name__)
 

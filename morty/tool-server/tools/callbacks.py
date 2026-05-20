@@ -20,6 +20,10 @@ class RequestCallbackRequest(BaseModel):
 
 class ResolveCallbackRequest(BaseModel):
     callback_id: int
+
+
+class TriggerReminderCallRequest(BaseModel):
+    appointment_id: int
     status: str  # 'Called' or 'Resolved'
 
 
@@ -98,6 +102,12 @@ def resolve_callback(body: ResolveCallbackRequest, db: sqlite3.Connection = Depe
         )
     db.commit()
     return {"success": True}
+
+
+@router.post("/trigger_reminder_call")
+def trigger_reminder_call(body: TriggerReminderCallRequest):
+    from scheduler import trigger_reminder_call_for
+    return trigger_reminder_call_for(body.appointment_id)
 
 
 @router.post("/hang_up")

@@ -215,11 +215,13 @@ def append_appointment_note(body: AppendNoteRequest, db: sqlite3.Connection = De
     if row is None:
         raise HTTPException(status_code=404, detail=f"Appointment {body.appointment_id} not found")
 
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     existing_notes = row["notes"]
     if existing_notes:
-        new_notes = f"{existing_notes} | {body.note}"
+        new_notes = f"{existing_notes} | [{ts}] {body.note}"
     else:
-        new_notes = body.note
+        new_notes = f"[{ts}] {body.note}"
 
     db.execute(
         "UPDATE appointments SET notes = ? WHERE id = ?",

@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
 import sqlite3
 
 from database import get_db
@@ -86,7 +85,6 @@ def check_inventory(body: CheckInventoryRequest, db: sqlite3.Connection = Depend
             "alternatives": [_row_to_color(r) for r in alternatives],
         }
 
-    found_color = _row_to_service_color(row)
     brand = row["brand"]
 
     # Build alternatives: up to 3 in-stock colors from same brand (excluding this color),
@@ -119,12 +117,4 @@ def check_inventory(body: CheckInventoryRequest, db: sqlite3.Connection = Depend
         "color_name": row["color_name"],
         "brand": row["brand"],
         "alternatives": [_row_to_color(r) for r in alternatives],
-    }
-
-
-def _row_to_service_color(row) -> dict:
-    return {
-        "color_name": row["color_name"],
-        "brand": row["brand"],
-        "in_stock": bool(row["in_stock"]),
     }

@@ -1,4 +1,4 @@
-from database import get_db
+from database import _open_db as get_db
 
 
 SERVICES = [

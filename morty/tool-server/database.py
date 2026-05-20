@@ -5,7 +5,7 @@ from pathlib import Path
 DB_PATH = os.environ.get("DB_PATH", "morty.db")
 
 
-def get_db() -> sqlite3.Connection:
+def _open_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -13,8 +13,16 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def get_db():
+    conn = _open_db()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def init_db():
-    conn = get_db()
+    conn = _open_db()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

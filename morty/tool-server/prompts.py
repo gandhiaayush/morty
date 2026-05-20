@@ -131,4 +131,4 @@ MODIFY / CANCEL:
 
 def build_outbound_greeting(name: str) -> str:
     """Return the opening line spoken when the outbound reminder call connects."""
-    return f"Hey, this is Hey {name}, this is Morty calling from Morty's Nail Salon — just reaching out about your appointment tomorrow!"
+    return f"Hey {name}, this is Morty calling from Morty's Nail Salon — just reaching out about your appointment tomorrow!"
