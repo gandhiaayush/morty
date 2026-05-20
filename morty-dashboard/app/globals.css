@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* Status badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.badge-green  { background-color: rgb(20 83 45 / 0.5);  color: #4ade80; border: 1px solid rgb(74 222 128 / 0.2); }
+.badge-amber  { background-color: rgb(120 53 15 / 0.5); color: #fbbf24; border: 1px solid rgb(251 191 36 / 0.2); }
+.badge-red    { background-color: rgb(127 29 29 / 0.5); color: #f87171; border: 1px solid rgb(248 113 113 / 0.2); }
+.badge-gray   { background-color: rgb(39 39 42 / 0.8);  color: #a1a1aa; border: 1px solid rgb(63 63 70 / 0.5); }
+.badge-blue   { background-color: rgb(30 58 138 / 0.5); color: #60a5fa; border: 1px solid rgb(96 165 250 / 0.2); }
+
+/* Monospace accent */
+.mono {
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+  font-size: 0.8125rem;
+  letter-spacing: 0.01em;
+}
+
+/* Thin scrollbar */
+* { scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
+
+/* Focus ring */
+*:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
