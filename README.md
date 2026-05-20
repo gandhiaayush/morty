@@ -1,19 +1,19 @@
-# Charlie's Cleaners — AI Voice Agent + Owner Dashboard
+# Morty — Nail Salon Voice Agent
 
-> **A phone number that thinks.** Customers call to place and check dry cleaning orders. The owner gets a live dashboard to manage everything. Every interaction writes directly to Notion in real time.
+> A phone number that thinks. Customers call to book and manage appointments. Every interaction writes directly to SQLite in real time.
 
 ---
 
 ## What It Does
 
-One Twilio phone number handles two caller types:
+One Twilio phone number handles any caller. AssemblyAI's Voice Agent API handles speech-to-text, LLM reasoning, and text-to-speech in a single real-time WebSocket. The Python tool-server executes all business logic against a local SQLite database.
 
 | Caller | Experience |
 |--------|------------|
-| **Customer** | Check order status, request expediting, add notes, request a callback — all by speaking naturally |
-| **Owner** | Full rundown of orders, make updates, trigger pickup calls, manage callbacks — all by voice |
+| **Customer** | Book, modify, or cancel appointments; check service prices and nail color availability; request a callback — all by speaking naturally |
+| **Owner** | Full schedule rundown, appointment status updates, callback management, manual reminder triggers — all by voice |
 
-While the caller is speaking, Gemini processes their intent and the tool dispatcher writes results to a Notion database. By the time the call ends, the order is already updated in Notion — no manual data entry, no forms.
+All callers receive the full tool set — no role split in the current implementation.
 
 ---
 
@@ -21,211 +21,78 @@ While the caller is speaking, Gemini processes their intent and the tool dispatc
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        INBOUND CALL FLOW                            │
+│                           INBOUND CALL FLOW                         │
 │                                                                     │
-│   Customer/Owner                                                    │
-│   calls +1 (925) 515-5725                                          │
+│   Caller dials Twilio number                                        │
 │           │                                                         │
 │           ▼                                                         │
-│   ┌───────────────┐  <Connect>   ┌─────────────────────────────┐   │
-│   │    Twilio     │ ──Stream──►  │   Express Voice Server      │   │
-│   │  (phone/RTP)  │ ◄──audio──   │   POST /voice               │   │
-│   └───────────────┘              │   WS   /media-stream        │   │
-│          │                       └──────────┬──────────────────┘   │
-│    μ-law 8kHz                               │                       │
-│    WebSocket frames                         │ PCM 16kHz             │
-│                              ┌──────────────▼──────────────────┐   │
-│                              │   Gemini 3.1 Flash Live          │   │
-│                              │   (gemini-3.1-flash-live-preview)│   │
-│                              │   Real-time audio-in / audio-out │   │
-│                              │   Tool declarations + dispatch   │   │
-│                              └──────────────┬──────────────────┘   │
-│                                             │ tool calls            │
-│                              ┌──────────────▼──────────────────┐   │
-│                              │        Notion API               │   │
-│                              │  Orders DB · Pricing DB         │   │
-│                              │  Callbacks DB · Call Log DB     │   │
+│   ┌───────────────┐  TwiML <Stream>  ┌──────────────────────────┐  │
+│   │    Twilio     │ ──WebSocket────► │   TypeScript Bridge       │  │
+│   │  (PSTN/RTP)   │ ◄──μ-law 8kHz─  │   POST /twilio/voice      │  │
+│   └───────────────┘                  │   WS   /twilio/stream     │  │
+│                                      └────────────┬─────────────┘  │
+│                                                   │ audio/pcmu     │
+│                                      ┌────────────▼─────────────┐  │
+│                                      │  AssemblyAI Voice Agent   │  │
+│                                      │  wss://agents.assemblyai  │  │
+│                                      │      .com/v1/realtime     │  │
+│                                      │  STT + LLM + TTS + tools  │  │
+│                                      └────────────┬─────────────┘  │
+│                                                   │ tool.call HTTP │
+│                                      ┌────────────▼─────────────┐  │
+│                                      │  Python FastAPI           │  │
+│                                      │  Tool-Server (:8000)      │  │
+│                                      │  SQLite  morty.db         │  │
+│                                      └──────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     BACKGROUND AUTOMATION                           │
+│                       OUTBOUND REMINDER CALLS                       │
 │                                                                     │
-│   ┌──────────────────────────────────────────────────────────┐     │
-│   │              Notion Worker  (src/index.ts)                │     │
-│   │                                                           │     │
-│   │   callbackPoller  ──── every 2 min ──► scan Callbacks DB │     │
-│   │        │                               find Approved      │     │
-│   │        └─────────────────────────────► auto-dial customer │     │
-│   │                                        log to Call Log   │     │
-│   │                                                           │     │
-│   │   pickupPoller  ────── every 10 min ──► scan Orders DB   │     │
-│   │        │                               find "Ready"       │     │
-│   │        └─────────────────────────────► auto-dial pickup  │     │
-│   └──────────────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                       OWNER DASHBOARD                               │
-│                                                                     │
-│   Browser  ──► GET / ──► public/index.html  (Vercel static)        │
-│                                                                     │
-│   Dashboard API  (src/dashboard.ts on Vercel)                      │
-│     POST /api/dashboard/auth          →  validate DASHBOARD_TOKEN  │
-│     GET  /api/dashboard/orders        →  Notion Orders DB query    │
-│     GET  /api/dashboard/stats         →  live counts               │
-│     PATCH /api/dashboard/orders/:id/* →  update any field          │
-│     POST /api/dashboard/callbacks/:id/call → trigger outbound call │
+│   APScheduler job fires every 15 min                                │
+│     → finds appointments 23–25h out, reminder_sent = 0             │
+│     → Twilio REST API places outbound call                          │
+│     → Bridge opens AssemblyAI session with reminder greeting        │
+│     → Customer can confirm, reschedule, or cancel by voice          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## How Notion Powers Everything
-
-Notion is the **single source of truth** for the entire operation.
-
-### Databases
-
-| Database | Purpose | Written by | Read by |
-|----------|---------|-----------|--------|
-| **Orders** | Every dry cleaning order: customer, garment, stage, price, payment, notes | Voice agent (Gemini tools), Owner dashboard | Voice agent, Dashboard, Worker pollers |
-| **Pricing** | Per-garment prices for Regular and Expedited | Manual / owner | Voice agent (`lookupPrice`), Dashboard |
-| **Callbacks** | Customers who requested a callback | Voice agent (`requestCallback`), Dashboard | Worker `callbackPoller` every 2 min |
-| **Callback Call Log** | Managed log of every auto-dialed callback attempt | Notion Worker | Dashboard Callbacks tab |
-
-### Notion Worker — Automated Pollers
-
-`src/index.ts` is the **Notion Worker** — deployed to Notion's infrastructure via `ntn deploy`. Two pollers run inside Notion with direct low-latency data source access.
+## Call Flow (Step by Step)
 
 ```
-callbackPoller  (every 2 min)
-  → queries Callbacks DB for STATUS = "Approved"
-  → dials the customer via Twilio outbound call
-  → marks "Called Back" on success; appends failure note + retries up to 3×
-  → logs to Callback Call Log DB
-
-pickupPoller  (every 10 min)
-  → queries Orders DB for TRACKER_STAGE = "Ready for Pickup"
-  → skips orders already notified (NOTES contains "📱 Pickup reminder sent")
-  → dials customer, stamps NOTES with reminder sent date
-```
-
-### Callback Approval Flow
-
-```
-Customer calls → says they need a callback
-  → AI calls requestCallback() → Notion Callbacks DB: STATUS = "Pending"
-
-Owner sees it in dashboard → clicks Approve
-  → STATUS = "Approved"
-
-callbackPoller fires (≤2 min later)
-  → finds Approved entry → dials via Twilio
-  → STATUS = "Called Back"
+1. Caller dials Twilio number
+2. Twilio POST /twilio/voice
+3. Bridge returns TwiML <Stream> → Twilio opens WS to /twilio/stream
+4. Bridge fetches on startup:
+   GET /tools/schemas   → tool definitions for session.update
+   GET /tools/prompts   → { system_prompt, greeting }
+5. Bridge opens AssemblyAI WS: wss://agents.assemblyai.com/v1/realtime
+   Authorization: Bearer <ASSEMBLYAI_API_KEY>
+6. On WS open, bridge sends session.update (system prompt, greeting, tools, audio/pcmu)
+7. AssemblyAI sends session.ready { session_id }
+8. Bridge: POST /sessions/start
+9. Audio loop:
+   Twilio μ-law frame → input.audio { audio: base64 } → AssemblyAI
+   AssemblyAI → tool.call → bridge POSTs /tools/{name} → tool.result IMMEDIATELY
+   AssemblyAI → reply.audio { data: base64 } → Twilio → caller
+10. hang_up tool or caller disconnect
+    → Bridge: POST /sessions/end → closes both WebSockets
 ```
 
 ---
 
-## Voice Agent — How It Works
+## Audio Pipeline
 
-### Real-Time Audio Pipeline
+No transcoding needed. Twilio G.711 μ-law is byte-compatible with AssemblyAI `audio/pcmu`.
 
-```
-Twilio                   Voice Server              Gemini Live
-  │   μ-law 8kHz frame      │                          │
-  │ ────────────────────►   │  PCM 16kHz (upsampled)   │
-  │                         │ ─────────────────────►   │
-  │                         │                          │ processes audio
-  │                         │  PCM 24kHz (response)    │
-  │                         │ ◄─────────────────────   │
-  │   μ-law 8kHz frame      │                          │
-  │ ◄────────────────────   │                          │
-```
-
-Gemini listens and speaks — all in real time. When Gemini decides to call a tool, it sends a `toolCall` event. The server executes it against Notion and sends back the response. Gemini then continues speaking with the result.
-
-### Opening Cue System
-
-On `start` event from Twilio, the server sends Gemini a text cue:
-- **Inbound customer**: `"[Call connected. Say exactly: 'Hey, this is Charlie's Cleaners — how can I help you today?']"`
-- **Inbound owner**: opens with greeting, waits for command
-- **Outbound pickup call**: `"[Say exactly: 'Hey, this is Charlie's Cleaners — is this {name}? Your order {id} is ready for pickup!']"`
-- **Wi-Fi reconnect** (session age > 8s): `"[Call reconnected. Do NOT re-introduce yourself. Say: 'Sorry about that — we got disconnected. Where were we?']"`
-
-### hangUp Tool
-
-When the conversation ends, Gemini calls `hangUp`. The server:
-1. Waits 3.5 seconds for goodbye audio to play
-2. Calls Twilio REST API: `calls(callSid).update({ status: "completed" })`
-3. Runs `completeSession()` → writes audit log to Supabase
-
----
-
-## Tool Sets
-
-### Consumer Tools (9)
-
-| Tool | What it does |
-|------|-------------|
-| `getOrderByPhone` | Look up orders by caller's phone — tries 6 phone format variants |
-| `getOrderById` | Look up by ORDER_ID (e.g. "ORD-0010") |
-| `searchOrdersByName` | Partial name match — fallback when phone lookup fails |
-| `lookupPrice` | Get price for garment × order type |
-| `listAllPrices` | Full pricing schedule |
-| `appendOrderNote` | Add note to an order |
-| `setOrderType` | Switch Regular ↔ Expedited |
-| `requestCallback` | Log callback request in Callbacks DB |
-| `hangUp` | End the call cleanly |
-
-### Owner Tools (18)
-
-All consumer tools, plus:
-
-| Tool | What it does |
-|------|-------------|
-| `cancelOrder` | Mark order Cancelled |
-| `updateTracker` | Advance stage: Received → Sorting → Cleaning → Pressing → Ready → Delivered |
-| `updatePayment` | Record payment method (Cash / Card / Venmo / Zelle / Unpaid) + date |
-| `updateGarmentType` | Correct garment type |
-| `updateOrderPrice` | Override price |
-| `updateOrderExpectedDate` | Change pickup/delivery date |
-| `listPendingCallbacks` | See all Pending callbacks |
-| `resolveCallback` | Mark callback Called Back or Resolved |
-| `triggerPickupCall` | Manually trigger outbound pickup notification |
-
----
-
-## Owner Dashboard
-
-Single-page app deployed on Vercel. Vanilla HTML/JS — no framework, no build step.
-
-**Dashboard API prefix:** `/api/dashboard/*`
-
-| Endpoint | Action |
-|---------|--------|
-| `POST /auth` | Validate `DASHBOARD_TOKEN` |
-| `GET /orders` | List orders with filters (status, stage, garment, payment, date range, text search) |
-| `GET /orders/:id` | Single order |
-| `GET /stats` | Live counts (open, expedited, unpaid, callbacks) |
-| `GET /prices` | Full pricing schedule |
-| `GET /callbacks` | Active callbacks (Pending + Approved) |
-| `GET /urgent` | Overdue orders + Ready for Pickup |
-| `GET /calls` | Call log from Notion managed DB |
-| `PATCH /orders/:id/tracker` | Update stage |
-| `PATCH /orders/:id/payment` | Record payment |
-| `PATCH /orders/:id/note` | Append note |
-| `PATCH /orders/:id/garment` | Update garment type |
-| `PATCH /orders/:id/price` | Update price |
-| `PATCH /orders/:id/type` | Update order type |
-| `PATCH /orders/:id/date` | Update expected date |
-| `PATCH /orders/:id/phone` | Update phone number |
-| `PATCH /orders/:id/callback` | Create callback record from dashboard |
-| `POST /orders` | Create new order |
-| `POST /orders/:id/call` | Trigger outbound call directly from order drawer |
-| `POST /callbacks/:id/call` | Trigger outbound callback call immediately |
-| `PATCH /callbacks/:id/phone` | Edit phone before approving |
-| `POST /callbacks/:id/approve` | Pending → Approved |
-| `POST /callbacks/:id/resolve` | Mark Resolved |
+| Direction | Format | Action |
+|-----------|--------|--------|
+| Twilio → Bridge | μ-law 8kHz base64 | Extract `media.payload`, forward as-is |
+| Bridge → AssemblyAI | `input.audio { audio: payload }` | Forward base64 directly |
+| AssemblyAI → Bridge | `reply.audio { data: base64 }` | Note: field is `data`, not `audio` |
+| Bridge → Twilio | μ-law 8kHz base64 | Wrap in `{ event: "media", media: { payload } }` |
 
 ---
 
@@ -233,158 +100,222 @@ Single-page app deployed on Vercel. Vanilla HTML/JS — no framework, no build s
 
 | Layer | Technology |
 |-------|-----------|
-| Phone / call routing | [Twilio Voice](https://www.twilio.com/docs/voice) — `<Connect><Stream>` WebSocket |
-| AI voice model | [Gemini 3.1 Flash Live](https://ai.google.dev/gemini-api/docs/live) (`gemini-3.1-flash-live-preview`) |
-| Audio codec | μ-law 8kHz ↔ PCM 16kHz/24kHz via `alawmulaw` |
-| Notion tool execution | `@notionhq/client` (direct REST) |
-| Background automation | `@notionhq/workers` (Notion Worker pollers) |
-| Session / audit store | [Supabase](https://supabase.com) — `call_sessions`, `audit_logs`, `callers` |
-| Voice API server | Node.js + Express (TypeScript) — persistent host required |
-| Dashboard API | Express on [Vercel](https://vercel.com) serverless |
-| Dashboard UI | Vanilla HTML/CSS/JS (no build step) |
-| Auth | Bearer token (`DASHBOARD_TOKEN`) |
-| Config validation | Zod |
+| Phone / PSTN | Twilio Voice — `<Connect><Stream>` WebSocket |
+| Voice Agent | AssemblyAI Voice Agent API (`wss://agents.assemblyai.com/v1/realtime`) |
+| Bridge | TypeScript + Express + `ws` |
+| Tool Server | Python 3.11+ + FastAPI + `uvicorn` |
+| Database | SQLite (`morty.db`) — no external DB |
+| Scheduler | APScheduler — automated reminder calls |
 
 ---
 
 ## Project Structure
 
 ```
-charlie-cleaners/
-├── src/
-│   ├── server.ts                      # Express + WebSocket server entry point
-│   ├── config.ts                      # Zod-validated env config
-│   ├── dashboard.ts                   # Vercel dashboard API (all /api/dashboard/* routes)
-│   ├── routes/
-│   │   ├── voice.ts                   # POST /voice — session init, TwiML <Connect><Stream>
-│   │   ├── mediaStream.ts             # WS /media-stream — Twilio ↔ Gemini audio bridge
-│   │   ├── outbound.ts                # POST /outbound — trigger outbound call via Twilio REST
-│   │   └── status.ts                  # POST /status — Twilio call status webhook
-│   ├── middleware/
-│   │   └── twilioValidate.ts          # Validates Twilio request signature (skipped in dev)
-│   ├── services/
-│   │   ├── gemini/
-│   │   │   ├── liveSession.ts         # Opens Gemini Live session, handles tool dispatch
-│   │   │   ├── tools.ts               # All FunctionDeclarations (CONSUMER_TOOLS, OWNER_TOOLS)
-│   │   │   ├── systemPrompt.ts        # CONSUMER_SYSTEM, OWNER_SYSTEM, buildOutboundSystem()
-│   │   │   └── audioConverter.ts      # twilioToGemini() + geminiToTwilio() codec bridge
-│   │   ├── notion/
-│   │   │   └── worker.ts              # callWorkerTool() — all Notion reads/writes
-│   │   └── supabase/
-│   │       └── sessions.ts            # createSession, getSession, completeSession, getCallerRole
-│   └── utils/
-│       ├── twiml.ts                   # buildStreamTwiml(), buildHangupTwiml()
-│       └── phone.ts                   # normalizePhone()
-├── src/index.ts                       # Notion Worker — callbackPoller + pickupPoller + tools
-├── public/
-│   └── index.html                     # Owner dashboard SPA (vanilla JS)
-├── vercel.json                        # Vercel routing — static HTML + Node function
-├── tsconfig.json
-├── nodemon.json                       # Dev: watch src/, run tsx src/server.ts
-└── package.json
+morty/
+├── tool-server/              # Python FastAPI + SQLite
+│   ├── main.py               # FastAPI app entry point, lifespan, router registration
+│   ├── database.py           # SQLite connection + get_db dependency
+│   ├── models.py             # SQLAlchemy-style models (if present)
+│   ├── schemas.py            # /tools/schemas and /tools/prompts endpoints
+│   ├── prompts.py            # CONSUMER_SYSTEM, CONSUMER_GREETING strings
+│   ├── scheduler.py          # APScheduler reminder job
+│   ├── seed.py               # seed_if_empty() — seeds DB on first run
+│   └── tools/
+│       ├── customers.py      # normalize_phone(), upsert_customer() helpers
+│       ├── crud.py           # book/modify/cancel/update_status/append_note
+│       ├── search.py         # search_customer, get_appointment, list_available_slots,
+│       │                     # list_today_appointments
+│       ├── services.py       # list_services, check_service, check_inventory
+│       └── callbacks.py      # request_callback, list_pending_callbacks,
+│                             # resolve_callback, hang_up
+│
+├── bridge/                   # TypeScript Twilio ↔ AssemblyAI (partner builds)
+│   ├── server.ts
+│   ├── twilio.ts
+│   ├── assemblyai.ts
+│   └── tool-dispatcher.ts
+│
+├── ARCHITECTURE.md           # Full system diagram + session lifecycle sequence diagram
+├── BRIDGE_CONTRACT.md        # Bridge integration spec (AssemblyAI WS, tool dispatch, audio)
+├── SCHEMA.md                 # SQLite schema reference
+└── ASSEMBLYAI.md             # AssemblyAI WebSocket API reference + gotchas
 ```
+
+---
+
+## Tool-Server: Run
+
+```bash
+cd morty/tool-server
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+On startup: `init_db()` → `seed_if_empty()` → `start_scheduler()` (APScheduler reminder job).
+
+---
+
+## Tool-Server: Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/tools/schemas` | AssemblyAI tool definitions — bridge calls on startup |
+| `GET` | `/tools/prompts` | Returns `{ system_prompt, greeting }` — bridge calls on startup |
+| `POST` | `/tools/{tool_name}` | Execute any tool with JSON body |
+| `POST` | `/sessions/start` | Log session open `{ session_id, phone, role, started_at }` |
+| `POST` | `/sessions/end` | Log session close `{ session_id, ended_at, duration_sec }` |
+| `GET` | `/health` | Returns `{ status: "ok" }` |
+
+---
+
+## Tools
+
+All callers receive all tools. No role filtering.
+
+### Booking & Appointment Management
+
+| Tool | Endpoint | Key Args |
+|------|----------|----------|
+| `search_customer` | `POST /tools/search_customer` | `phone?`, `name?` |
+| `get_appointment` | `POST /tools/get_appointment` | `appointment_id` |
+| `list_available_slots` | `POST /tools/list_available_slots` | `date` (YYYY-MM-DD), `service_name?` |
+| `book_appointment` | `POST /tools/book_appointment` | `name`, `phone`, `service`, `datetime`, `color?` |
+| `modify_appointment` | `POST /tools/modify_appointment` | `appointment_id`, `datetime?`, `service?`, `color?` |
+| `cancel_appointment` | `POST /tools/cancel_appointment` | `appointment_id` |
+
+### Services & Inventory
+
+| Tool | Endpoint | Key Args |
+|------|----------|----------|
+| `list_services` | `POST /tools/list_services` | *(none)* |
+| `check_service` | `POST /tools/check_service` | `service_name` |
+| `check_inventory` | `POST /tools/check_inventory` | `color_name` |
+
+### Owner / Operations
+
+| Tool | Endpoint | Key Args |
+|------|----------|----------|
+| `list_today_appointments` | `POST /tools/list_today_appointments` | *(none)* |
+| `update_appointment_status` | `POST /tools/update_appointment_status` | `appointment_id`, `status` |
+| `list_pending_callbacks` | `POST /tools/list_pending_callbacks` | *(none)* |
+| `resolve_callback` | `POST /tools/resolve_callback` | `callback_id`, `status` |
+| `trigger_reminder_call` | `POST /tools/trigger_reminder_call` | `appointment_id` |
+| `append_appointment_note` | `POST /tools/append_appointment_note` | `appointment_id`, `note` |
+
+### Call Control
+
+| Tool | Endpoint | Key Args |
+|------|----------|----------|
+| `request_callback` | `POST /tools/request_callback` | `name`, `phone`, `reason` |
+| `hang_up` | `POST /tools/hang_up` | *(none)* — bridge handles actual hangup |
+
+---
+
+## SQLite Schema (actual columns from code)
+
+### `services`
+`id`, `name`, `category`, `price_cents` (integer, USD cents), `duration_minutes`, `description`, `available`
+
+### `inventory`
+`id`, `color_name`, `brand`, `in_stock` (boolean 0/1)
+
+### `appointments`
+`id`, `customer_id` (FK), `service_id` (FK), `nail_color`, `datetime` (ISO 8601), `status`, `notes`, `call_sid`, `reminder_sent` (boolean 0/1), `created_at`
+
+Valid statuses: `Pending`, `Confirmed`, `Completed`, `Cancelled`, `No-Show`
+
+### `customers`
+`id`, `name`, `phone` (E.164, unique), `created_at`
+
+### `callbacks`
+`id`, `customer_id` (FK, nullable), `phone`, `reason`, `status` (`Pending` / `Called` / `Resolved`), `attempts`, `created_at`, `resolved_at`
+
+### `sessions`
+`id`, `session_id` (AssemblyAI session_id, unique), `phone`, `role`, `started_at`, `ended_at`, `duration_sec`
+
+See [morty/SCHEMA.md](morty/SCHEMA.md) for full `CREATE TABLE` statements.
 
 ---
 
 ## Environment Variables
 
+### tool-server (`morty/tool-server/.env`)
+
 ```bash
-# Twilio
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-TWILIO_PHONE_NUMBER=+1...
-TWILIO_WEBHOOK_BASE=https://your-ngrok-or-server-url  # voice server URL — no trailing slash
-BASE_URL=https://your-ngrok-or-server-url              # same value as TWILIO_WEBHOOK_BASE
+ASSEMBLYAI_API_KEY=c65d449af3f24b93b92b6a4b31e65a31
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=
+TWILIO_WEBHOOK_BASE=         # bridge public URL, no trailing slash
+OWNER_PHONE_NUMBER=
+DB_PATH=morty.db
+PORT=8000
+```
 
-# Gemini
-GEMINI_API_KEY=AIza...
+### bridge (`morty/bridge/.env`)
 
-# Anthropic (reserved — not currently used by voice agent)
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Notion
-NOTION_API_KEY=ntn_...
-ORDERS_DATA_SOURCE_ID=       # ntn datasources resolve <orders-db-id>
-PRICING_DATA_SOURCE_ID=      # ntn datasources resolve <pricing-db-id>
-CALLBACKS_DATABASE_ID=       # raw Notion DB ID (for @notionhq/client pages.create)
-CALLBACKS_DATA_SOURCE_ID=    # ntn datasources resolve <callbacks-db-id>  ← different from DATABASE_ID
-ARCHIVE_DATA_SOURCE_ID=      # ntn datasources resolve <archive-db-id>
-
-# Supabase (service role key only — never expose anon key server-side)
-SUPABASE_URL=https://...supabase.co
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
-
-# Dashboard
-DASHBOARD_TOKEN=             # openssl rand -hex 32
-
-# Business
-OWNER_PHONE_NUMBER=+1...     # this phone number gets OWNER_TOOLS; all others get CONSUMER_TOOLS
-OWNER_NAME=Charlie           # used in system prompts
-
-# Limits
-MAX_TURNS_PER_CALL=15
-NODE_ENV=development         # set to production on real host — enables Twilio signature validation
+```bash
+ASSEMBLYAI_API_KEY=c65d449af3f24b93b92b6a4b31e65a31
+TOOL_SERVER_URL=http://localhost:8000   # or ngrok URL in dev
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+PORT=3000
+LOG_LEVEL=info
 ```
 
 ---
 
-## Deploying
+## Dev Setup
 
-**Voice server (requires persistent host — NOT Vercel):**
 ```bash
-# Railway / Render / EC2 / etc.
-npm run build
-npm start
+# Start tool-server (seeds DB automatically on first run)
+cd morty/tool-server
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
 
-# Local dev with ngrok
-npm run dev
+# Expose bridge publicly for Twilio webhooks
 ngrok http 3000
-# Set TWILIO_WEBHOOK_BASE to the ngrok URL
-# Set that URL as your Twilio voice webhook
+
+# Start bridge (partner repo)
+cd morty/bridge
+npm install
+npm run dev
 ```
 
-**Dashboard (Vercel):**
-```bash
-vercel deploy
-# TWILIO_WEBHOOK_BASE must point to your voice server, not this Vercel deploy
-```
+Set `TWILIO_WEBHOOK_BASE` to the ngrok URL. Point Twilio voice webhook at `https://{ngrok}/twilio/voice`.
 
-**Notion Worker (pollers):**
-```bash
-npm install -g @notionhq/workers-cli
-ntn workers env push        # push .env vars to Worker runtime
-ntn deploy                  # deploy callbackPoller + pickupPoller
+---
+
+## Outbound Reminder Calls
+
+APScheduler fires every 15 minutes inside the tool-server:
+
+```
+Find: appointments WHERE datetime BETWEEN now+23h AND now+25h
+      AND reminder_sent = 0 AND status IN ('Pending', 'Confirmed')
+
+For each match:
+  → Twilio REST API places outbound call to customer
+  → Twilio hits bridge /twilio/reminder?appointment_id={id}
+  → Bridge opens AssemblyAI session with reminder greeting
+  → Customer confirms, reschedules, or cancels by voice
+  → tool-server sets reminder_sent = 1
 ```
 
 ---
 
-## Call Flow
+## AssemblyAI: Critical Rules
 
-```
-1. Caller dials +1 (925) 515-5725
-2. Twilio POST /voice  →  Express checks From number against Supabase callers table
-   - Owner number?  →  owner system prompt + OWNER_TOOLS (18)
-   - Anyone else?   →  consumer system prompt + CONSUMER_TOOLS (9)
-3. TwiML <Connect><Stream> sent — Twilio opens WebSocket to /media-stream
-4. Server opens Gemini Live session with system prompt + tools
-5. Server sends text opening cue → Gemini speaks greeting
-6. Caller speaks → Twilio sends μ-law 8kHz frames → server upsamples to PCM 16kHz → Gemini
-7. Gemini streams PCM 24kHz audio back → server downsamples to μ-law 8kHz → Twilio → caller
-8. Gemini calls tools → server executes against Notion API → result sent back to Gemini
-9. Gemini calls hangUp → server waits 3.5s → Twilio REST hangup → completeSession()
-10. POST /status (Twilio callback) → fallback session completion
-```
+| # | Rule |
+|---|------|
+| 1 | Send `tool.result` **immediately** after receiving `tool.call` — never wait for `reply.done` |
+| 2 | `reply.audio` audio payload is in **`data`** field, not `audio` |
+| 3 | `tool.result.result` must be **`JSON.stringify(obj)`** — a string, not an object |
+| 4 | `tool.call.arguments` is already a parsed object — do not `JSON.parse` again |
+| 5 | Send `session.update` on WebSocket `open` event — before `session.ready` arrives |
+| 6 | `Authorization: Bearer <key>` — the `Bearer` prefix is required |
+| 7 | `session.resume` only works within **30 seconds** of disconnect |
+| 8 | On `reply.done.status == "interrupted"` — flush Twilio output buffer and discard pending tool results |
 
----
-
-## Why Gemini Live
-
-Most voice agents use a pipeline: STT → LLM text → TTS. This project uses Gemini Live's native audio-in/audio-out mode:
-
-1. **No STT/TTS latency** — Gemini processes audio directly and responds in audio. No intermediate transcription round-trip.
-2. **Native interruption handling** — Gemini detects when the caller speaks mid-response and stops automatically.
-3. **Tool use during conversation** — Gemini can call Notion tools mid-sentence, get results, and seamlessly incorporate them without breaking the voice flow.
-
----
-
-*Built for the Notion Hackathon 2026.*
+See [morty/ASSEMBLYAI.md](morty/ASSEMBLYAI.md) for the full API reference.
