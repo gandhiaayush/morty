@@ -183,13 +183,15 @@ wss.on("connection", (twilioWs: WebSocket, _req: IncomingMessage) => {
 
         console.log(`[bridge] tool.result: ${toolName}`, result);
 
-        ws.send(
-          JSON.stringify({
-            type: "tool.result",
-            call_id: callId,
-            result: JSON.stringify(result),
-          })
-        );
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "tool.result",
+              call_id: callId,
+              result: JSON.stringify(result),
+            })
+          );
+        }
       }
 
       if (type === "session.error") {

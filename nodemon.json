@@ -1,7 +1,7 @@
 {
-  "watch": ["src"],
+  "watch": ["morty/bridge"],
   "ext": "ts",
-  "exec": "tsx src/server.ts",
+  "exec": "tsx morty/bridge/server.ts",
   "env": { "NODE_ENV": "development" }
 }
 
