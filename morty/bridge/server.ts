@@ -1,3 +1,8 @@
+import { config as dotenvConfig } from "dotenv";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+dotenvConfig({ path: resolve(dirname(fileURLToPath(import.meta.url)), ".env") });
+
 import express from "express";
 import { createServer } from "http";
 import { WebSocket, WebSocketServer } from "ws";
